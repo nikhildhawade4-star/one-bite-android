@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f36b21">
+<title>One Bite POS</title>
+<link rel="manifest" href="./pos.webmanifest">
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#f7f6f4;color:#292929}
+header{background:#f36b21;color:white;padding:16px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+header h2{margin:0;font-size:22px}
+main{max-width:1150px;margin:auto;padding:14px}
+.panel{background:white;border-radius:12px;padding:15px;margin-bottom:15px;box-shadow:0 2px 8px #0000000d}
+h3{margin:0 0 13px}
+input,select,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #ddd;max-width:100%}
+button{background:#f36b21;color:white;border:0;cursor:pointer;font-weight:bold}
+button.secondary{background:#555}
+button.danger{background:#c62828}
+button:disabled{opacity:.5}
+.layout{display:grid;grid-template-columns:1.1fr .9fr;gap:15px}
+.menu{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:9px}
+.item{border:1px solid #eee;border-radius:10px;padding:11px}
+.item strong{display:block;margin-bottom:8px}
+.item button{width:100%}
+.line{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0}
+.total{font-size:22px;font-weight:bold}
+input[type=number]{width:95px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.order-list{display:flex;gap:8px;overflow-x:auto;padding:2px 1px 9px}
+.order-tab{min-width:125px;text-align:left;background:#eee;color:#292929;border:2px solid transparent;padding:10px}
+.order-tab.active{border-color:#f36b21;background:#fff3eb}
+.order-tab small{display:block;color:#666;font-weight:normal;margin-top:4px}
+.order-tab .tab-close{float:right;color:#b00020}
+.empty{padding:15px;background:#fafafa;border-radius:8px;color:#777;text-align:center}
+small{color:#777}
+@media(max-width:720px){.layout{grid-template-columns:1fr}header h2{font-size:19px}main{padding:10px}.panel{padding:13px}}
+</style>
+</head>
+<body>
+<header>
+<h2>🍔 One Bite POS</h2>
+<div id="today"></div>
+</header>
+<main>
+<section class="panel">
+<h3>Billing Counter</h3>
+<div class="actions">
+<button onclick="createOrder('Dine-in')">＋ New Dine-in</button>
+<button onclick="createOrder('Takeaway / Parcel')">＋ New Takeaway</button>
+<button class="secondary" onclick="showHistory()">Bill History</button>
+<button class="secondary" onclick="manageMenu()">Manage Menu</button>
+</div>
+<p><small>One Bite – Take a Bite, Feel the Happiness!</small></p>
+</section>
+
+<section class="panel">
+<div class="line"><h3 style="margin:0">Open Orders</h3><small id="openCount"></small></div>
+<div id="orderTabs" class="order-list"></div>
+<div id="noOrders" class="empty" hidden>No open orders. Tap New Dine-in or New Takeaway to start.</div>
+</section>
+
+<div class="layout">
+<section class="panel">
+<h3>Menu</h3>
+<input id="search" placeholder="Search menu..." oninput="renderMenu()" style="width:100%;margin-bottom:12px">
+<div id="menu" class="menu"></div>
+</section>
+
+<section class="panel">
+<h3 id="currentTitle">Current Order</h3>
+<div id="orderEditor">
+<div class="empty">Create or select an open order to start billing.</div>
+</div>
+</section>
+</div>
+<div id="extra"></div>
+</main>
+
+<script>
+const defaultMenu=[
+{name:"Veg Sandwich",price:60},
+{name:"Cheese Sandwich",price:90},
+{name:"Grilled Sandwich",price:80},
+{name:"Veg Pizza",price:120},
+{name:"Cheese Pizza",price:150},
+{name:"French Fries",price:70},
+{name:"Burger",price:80},
+{name:"Vada Pav",price:20},
+{name:"Tea",price:15},
+{name:"Coffee",price:25}
+];
+
+let menuItems=JSON.parse(localStorage.getItem("ob_menu")||"null")||defaultMenu;
+let bills=JSON.parse(localStorage.getItem("ob_bills")||"[]");
+let openOrders=JSON.parse(localStorage.getItem("ob_open_orders")||"[]");
+let activeOrderId=localStorage.getItem("ob_active_order")||null;
+
+function money(n){return "₹"+Number(n||0).toFixed(2)}
+function saveMenu(){localStorage.setItem("ob_menu",JSON.stringify(menuItems))}
+function saveBills(){localStorage.setItem("ob_bills",JSON.stringify(bills))}
+function saveOrders(){
+ localStorage.setItem("ob_open_orders",JSON.stringify(openOrders));
+ if(activeOrderId)localStorage.setItem("ob_active_order",activeOrderId);
+ else localStorage.removeItem("ob_active_order");
+}
+function currentOrder(){return openOrders.find(o=>o.id===activeOrderId)||null}
+function orderLabel(o){
+ if(o.type==="Dine-in")return o.table?o.table:"Dine-in";
+ return o.table?o.table:"Takeaway";
+}
+function createOrder(type){
+ const id="OB-"+Date.now()+"-"+Math.floor(Math.random()*1000);
+ let label="";
+ if(type==="Dine-in"){
+  label=prompt("Enter table name or number (example: Table 1):","Table "+(openOrders.filter(o=>o.type==="Dine-in").length+1));
+  if(label===null)return;
+  label=label.trim();
+  if(!label)label="Dine-in";
+ }else{
+  label="Parcel "+(openOrders.filter(o=>o.type!=="Dine-in").length+1);
+ }
+ const order={id,type,table:label,cart:[],discount:0,payment:"Cash",createdAt:new Date().toISOString()};
+ openOrders.unshift(order);
+ activeOrderId=id;
+ saveOrders();renderAll();
+}
+function selectOrder(id){activeOrderId=id;saveOrders();renderAll()}
+function closeEmptyOrder(id){
+ const o=openOrders.find(x=>x.id===id);
+ if(!o)return;
+ if(o.cart.length&&!confirm("This order has items. Delete this unfinished order?"))return;
+ openOrders=openOrders.filter(x=>x.id!==id);
+ if(activeOrderId===id)activeOrderId=openOrders[0]?.id||null;
+ saveOrders();renderAll();
+}
+function renderTabs(){
+ const el=document.getElementById("orderTabs");
+ document.getElementById("openCount").textContent=openOrders.length+" open";
+ document.getElementById("noOrders").hidden=openOrders.length!==0;
+ el.innerHTML=openOrders.map(o=>{
+  const total=o.cart.reduce((s,x)=>s+x.price*x.qty,0)-Math.min(totalDiscount(o),o.cart.reduce((s,x)=>s+x.price*x.qty,0));
+  return `<button class="order-tab ${o.id===activeOrderId?"active":""}" onclick="selectOrder('${o.id}')">
+   <span class="tab-close" onclick="event.stopPropagation();closeEmptyOrder('${o.id}')">×</span>
+   <strong>${escapeHtml(orderLabel(o))}</strong>
+   <small>${o.type} · ${o.cart.length} item type(s)</small>
+   <small>${money(Math.max(0,total))}</small>
+  </button>`;
+ }).join("");
+}
+function totalDiscount(o){
+ const sub=o.cart.reduce((s,x)=>s+x.price*x.qty,0);
+ return Math.max(0,Math.min(sub,Number(o.discount)||0));
+}
+function escapeHtml(s){
+ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function renderMenu(){
+ const q=document.getElementById("search").value.toLowerCase();
+ document.getElementById("menu").innerHTML=menuItems
+ .filter(x=>x.name.toLowerCase().includes(q))
+ .map((x,i)=>`<div class="item">
+ <strong>${escapeHtml(x.name)}</strong>
+ <div class="line">${money(x.price)}</div>
+ <button onclick="addItem(${i})" ${currentOrder()?"":"disabled"}>Add to Order</button>
+ </div>`).join("");
+}
+function addItem(i){
+ const o=currentOrder();
+ if(!o){alert("Please create or select an order first.");return}
+ const item=menuItems[i];
+ const found=o.cart.find(x=>x.name===item.name);
+ if(found)found.qty++;
+ else o.cart.push({...item,qty:1});
+ saveOrders();renderAll();
+}
+function changeQty(i,n){
+ const o=currentOrder();if(!o)return;
+ o.cart[i].qty+=n;
+ if(o.cart[i].qty<=0)o.cart.splice(i,1);
+ saveOrders();renderAll();
+}
+function removeItem(i){
+ const o=currentOrder();if(!o)return;
+ o.cart.splice(i,1);saveOrders();renderAll();
+}
+function updateDiscount(v){
+ const o=currentOrder();if(!o)return;
+ o.discount=Math.max(0,Number(v)||0);saveOrders();renderTabs();renderTotals();
+}
+function updatePayment(v){
+ const o=currentOrder();if(!o)return;
+ o.payment=v;saveOrders();
+}
+function updateOrderLabel(v){
+ const o=currentOrder();if(!o)return;
+ o.table=v;saveOrders();renderTabs();document.getElementById("currentTitle").textContent=orderLabel(o);
+}
+function clearCurrentOrder(){
+ const o=currentOrder();if(!o)return;
+ if(confirm("Clear all items from this order?")){
+  o.cart=[];o.discount=0;saveOrders();renderAll();
+ }
+}
+function renderTotals(){
+ const o=currentOrder();if(!o)return;
+ const sub=o.cart.reduce((s,x)=>s+x.price*x.qty,0);
+ const discount=totalDiscount(o);
+ document.getElementById("subtotal").textContent=money(sub);
+ document.getElementById("total").textContent=money(sub-discount);
+}
+function renderEditor(){
+ const o=currentOrder(),el=document.getElementById("orderEditor");
+ if(!o){
+  document.getElementById("currentTitle").textContent="Current Order";
+  el.innerHTML='<div class="empty">Create or select an open order to start billing.</div>';
+  return;
+ }
+ document.getElementById("currentTitle").textContent=orderLabel(o);
+ el.innerHTML=`
+ <div class="line"><label>Order type</label><strong>${escapeHtml(o.type)}</strong></div>
+ <div class="line"><label>Table / Order name</label><input value="${escapeHtml(o.table)}" onchange="updateOrderLabel(this.value)" style="width:60%"></div>
+ <div id="cart">
+ ${o.cart.length?o.cart.map((x,i)=>`
+  <div class="line">
+   <div><strong>${escapeHtml(x.name)}</strong><br><small>${money(x.price)} each</small></div>
+   <div class="actions">
+    <button onclick="changeQty(${i},-1)">−</button><strong>${x.qty}</strong>
+    <button onclick="changeQty(${i},1)">+</button>
+    <button class="danger" onclick="removeItem(${i})">×</button>
+   </div>
+  </div>`).join(""):'<small>No items added yet. Select items from the menu.</small>'}
+ </div>
+ <hr>
+ <div class="line"><label>Discount (₹)</label><input type="number" min="0" value="${Number(o.discount)||0}" onchange="updateDiscount(this.value)" style="width:110px"></div>
+ <div class="line"><span>Subtotal</span><strong id="subtotal">₹0.00</strong></div>
+ <div class="line total"><span>Total</span><span id="total">₹0.00</span></div>
+ <div class="line"><label>Payment</label><select onchange="updatePayment(this.value)">
+  <option ${o.payment==="Cash"?"selected":""}>Cash</option>
+  <option ${o.payment==="UPI"?"selected":""}>UPI</option>
+  <option ${o.payment==="Card"?"selected":""}>Card</option>
+ </select></div>
+ <div class="actions">
+  <button onclick="checkout()">Complete Payment</button>
+  <button class="secondary" onclick="clearCurrentOrder()">Clear Order</button>
+ </div>`;
+ renderTotals();
+}
+function renderAll(){renderTabs();renderEditor();renderMenu()}
+function checkout(){
+ const o=currentOrder();
+ if(!o||!o.cart.length){alert("Please add items first.");return}
+ const subtotal=o.cart.reduce((s,x)=>s+x.price*x.qty,0);
+ const discount=totalDiscount(o);
+ const bill={
+  id:Date.now(),date:new Date().toLocaleString("en-IN"),type:o.type,table:o.table,
+  items:o.cart.map(x=>({...x})),subtotal,discount,total:subtotal-discount,payment:o.payment
+ };
+ bills.unshift(bill);saveBills();
+ openOrders=openOrders.filter(x=>x.id!==o.id);
+ activeOrderId=openOrders[0]?.id||null;
+ saveOrders();renderAll();
+ alert("Payment completed!\\nTotal: "+money(bill.total));
+ printBill(bill);
+}
+function printBill(b){
+ const w=window.open("","_blank","width=400,height=650");
+ if(!w){alert("Please allow pop-ups to print the receipt.");return}
+ w.document.write(`
+ <html><head><title>One Bite Receipt</title>
+ <style>body{font-family:Arial;padding:15px}h2,p{text-align:center}hr{border-top:1px dashed #777}.row{display:flex;justify-content:space-between;margin:9px 0}</style>
+ </head><body>
+ <h2>ONE BITE</h2><p>Take a Bite, Feel the Happiness!</p><hr>
+ <p>${escapeHtml(b.date)}</p><p>${escapeHtml(b.type)} ${escapeHtml(b.table||"")}</p><hr>
+ ${b.items.map(x=>`<div class="row"><span>${escapeHtml(x.name)} x ${x.qty}</span><span>${money(x.price*x.qty)}</span></div>`).join("")}
+ <hr><div class="row"><b>Subtotal</b><b>${money(b.subtotal)}</b></div>
+ <div class="row"><span>Discount</span><span>${money(b.discount)}</span></div>
+ <div class="row"><h3>Total</h3><h3>${money(b.total)}</h3></div>
+ <p>Payment: ${escapeHtml(b.payment)}</p><hr><p>Thank you! Visit again ❤️</p>
+ <script>window.onload=()=>window.print();<\/script>
+ </body></html>`);
+ w.document.close();
+}
+function showHistory(){
+ const el=document.getElementById("extra");
+ el.innerHTML=`<section class="panel"><h3>Bill History</h3>
+ ${bills.length?bills.map(b=>`<div class="line"><div><strong>${money(b.total)}</strong><br><small>${escapeHtml(b.date)} · ${escapeHtml(b.type)} · ${escapeHtml(b.payment)}</small></div><button onclick="printBill(bills.find(x=>x.id===${b.id}))">Print</button></div>`).join(""):'<small>No bills yet.</small>'}
+ <p><button class="secondary" onclick="document.getElementById('extra').innerHTML=''">Close</button></p></section>`;
+}
+function manageMenu(){
+ const el=document.getElementById("extra");
+ el.innerHTML=`<section class="panel"><h3>Manage Menu</h3>
+ <input id="newName" placeholder="Item name"><input id="newPrice" type="number" min="0" placeholder="Price ₹">
+ <button onclick="addMenuItem()">Add Item</button><hr><div id="menuManage"></div>
+ <button class="secondary" onclick="document.getElementById('extra').innerHTML=''">Close</button></section>`;
+ renderManageMenu();
+}
+function addMenuItem(){
+ const name=document.getElementById("newName").value.trim(),price=Number(document.getElementById("newPrice").value);
+ if(!name||!Number.isFinite(price)||price<=0){alert("Enter a valid item name and price.");return}
+ menuItems.push({name,price});saveMenu();renderMenu();
+ document.getElementById("newName").value="";document.getElementById("newPrice").value="";renderManageMenu();
+}
+function renderManageMenu(){
+ const el=document.getElementById("menuManage");if(!el)return;
+ el.innerHTML=menuItems.map((x,i)=>`<div class="line"><span>${escapeHtml(x.name)} — ${money(x.price)}</span><div class="actions"><button class="secondary" onclick="editMenuItem(${i})">Edit</button><button class="danger" onclick="deleteMenuItem(${i})">Delete</button></div></div>`).join("");
+}
+function editMenuItem(i){
+ const name=prompt("Item name:",menuItems[i].name);if(name===null)return;
+ const price=prompt("Price:",menuItems[i].price);if(price===null)return;
+ if(!name.trim()||!Number.isFinite(Number(price))||Number(price)<=0){alert("Invalid name or price.");return}
+ menuItems[i]={name:name.trim(),price:Number(price)};saveMenu();renderMenu();renderManageMenu();
+}
+function deleteMenuItem(i){
+ if(confirm("Delete "+menuItems[i].name+"?")){menuItems.splice(i,1);saveMenu();renderMenu();renderManageMenu()}
+}
+document.getElementById("today").textContent=new Date().toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
+if(!openOrders.length)activeOrderId=null;
+else if(!openOrders.some(o=>o.id===activeOrderId))activeOrderId=openOrders[0].id;
+saveOrders();renderAll();
+
+if("serviceWorker" in navigator){
+ window.addEventListener("load",()=>{
+  navigator.serviceWorker.register("./pos-sw.js").catch(err=>console.error("Service worker error:",err));
+ });
+}
+</script>
+</body>
+</html>
